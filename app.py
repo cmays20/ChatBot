@@ -1,37 +1,122 @@
+import os
+
 import streamlit as st
 from llama_stack_client import LlamaStackClient
+from llama_stack_client.lib.agents.agent import Agent
 
-# Initialize client (adjust base_url if needed)
-client = LlamaStackClient(base_url="http://lsd-llama-milvus-service.rag.svc.cluster.local:8321")
+# Initialize client
+base_url = os.getenv("LLAMA_STACK_URL", "http://lsd-llama-milvus-service.rag.svc.cluster.local:8321")
+print(f"Using base URL: {base_url}")
+client = LlamaStackClient(base_url=base_url)
 
 vector_db_id = "my-milvus-db"
+
+model_id = "llama-model"
 
 st.set_page_config(page_title="Conference Concierge", page_icon="🤖")
 st.title("🎤 Conference Concierge Chatbot")
 
+# Add connection test in sidebar
+with st.sidebar:
+    st.header("Connection Status")
+
+    # Test connection
+    try:
+        models = client.models.list()
+        st.success(f"✅ Connected to Llama Stack")
+        st.write(f"Available models: {len(models)}")
+        model_id = models[0].identifier if models else "meta-llama/Llama-3.2-3B-Instruct"
+        st.write(f"Using model: {model_id}")
+    except Exception as e:
+        st.error(f"❌ Connection failed: {str(e)}""")
+        st.write(f"Server URL: {client.base_url}")
+        model_id = None
+
+# Only proceed if we have a connection
+if model_id is None:
+    st.error("Cannot connect to Llama Stack server. Please check:")
+    st.markdown("""
+    1. Is the server URL correct?
+    2. Is the Llama Stack service running?
+    3. Can your app reach the service (network/firewall)?
+    4. Try: `kubectl get pods -n rag` to check if pods are running
+    """)
+    st.stop()
+
+# Initialize session state
 if "history" not in st.session_state:
     st.session_state.history = []
+if "agent" not in st.session_state:
+    try:
+        # Create an Agent for conversational RAG queries - matching your example format exactly
+        st.session_state.agent = Agent(
+            client,
+            model=model_id,
+            instructions="""You are a helpful conference concierge assistant for TechNet Indo-Pacific 2025. 
+            When users ask about sessions, provide a friendly, conversational response (2-3 sentences).
+            Summarize what you found and highlight the most relevant information.
+            Keep it concise - detailed session information will be shown in a table.""",
+            tools=[
+                {
+                    "name": "builtin::rag/knowledge_search",
+                    "args": {"vector_db_ids": [vector_db_id]},
+                }
+            ],
+        )
+    except Exception as e:
+        st.error(f"Error initializing agent: {str(e)}")
+        st.stop()
+if "session_id" not in st.session_state:
+    try:
+        st.session_state.session_id = st.session_state.agent.create_session("conference_chat")
+    except Exception as e:
+        st.error(f"Error creating session: {str(e)}")
+        st.stop()
+
+
+# Sidebar
+with st.sidebar:
+    st.header("Settings")
+    if st.button("Clear Chat History"):
+        st.session_state.history = []
+        st.session_state.session_id = st.session_state.agent.create_session("conference_chat")
+        st.rerun()
 
 # Chat input
-user_input = st.chat_input("Ask me about TIP25 sessions...")
+user_input = st.chat_input("Ask me about TechNet Indo-Pacific 2025 sessions...")
 if user_input:
-    # Query your RAG tool
-    result = client.tool_runtime.rag_tool.query(
-        vector_db_ids=[vector_db_id],
-        content=user_input,
-    )
+    with st.spinner("Searching and generating response..."):
 
-    # For simplicity, just take the top result’s text
-    answer = ""
-    if result.metadata.get("chunks"):
-        answer = result.metadata["chunks"][0]
-    else:
-        answer = "I couldn’t find anything relevant."
+        # Get conversational response from agent
+        response = st.session_state.agent.create_turn(
+            messages=[{"role": "user", "content": user_input}],
+            session_id=st.session_state.session_id,
+            stream=True,
+        )
 
-    # Save to history
-    st.session_state.history.append((user_input, answer))
+        # Collect the response
+        full_response = ""
+        for event in response:
+            if hasattr(event, 'event') and hasattr(event.event, 'payload'):
+                payload = event.event.payload
+
+                # Extract completion message
+                if hasattr(payload, 'turn') and hasattr(payload.turn, 'output_message'):
+                    if hasattr(payload.turn.output_message, 'content'):
+                        full_response = payload.turn.output_message.content
+                # Also handle streaming chunks
+                elif hasattr(payload, 'delta') and hasattr(payload.delta, 'content'):
+                    full_response += payload.delta.content
+
+        # Save to history
+        st.session_state.history.append({
+            "query": user_input,
+            "response": full_response if full_response else "I found some relevant sessions for you."
+        })
 
 # Display chat history
-for q, a in st.session_state.history:
-    st.chat_message("user").write(q)
-    st.chat_message("assistant").write(a)
+for item in st.session_state.history:
+    st.chat_message("user").write(item["query"])
+
+    with st.chat_message("assistant"):
+        st.write(item["response"])
