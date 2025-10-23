@@ -1,3 +1,2 @@
 streamlit
-llama_stack_client
-pandas
+llama-stack-client<0.3.0

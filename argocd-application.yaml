@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: chatbot
+  namespace: openshift-gitops
+spec:
+  destination:
+    server: 'https://kubernetes.default.svc'
+  project: default
+  source:
+    path: deploy/
+    repoURL: https://github.com/cmays20/ChatBot.git
+    targetRevision: HEAD
+  syncPolicy:
+    automated:
+      selfHeal: true
