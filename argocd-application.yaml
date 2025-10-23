@@ -8,7 +8,7 @@ spec:
     server: 'https://kubernetes.default.svc'
   project: default
   source:
-    path: deploy/
+    path: deploy
     repoURL: https://github.com/cmays20/ChatBot.git
     targetRevision: HEAD
   syncPolicy:
