@@ -8,8 +8,9 @@ from llama_stack_client.lib.agents.agent import Agent
 base_url = os.getenv("LLAMA_STACK_URL", "http://lsd-llama-milvus-service.rag.svc.cluster.local:8321")
 print(f"Using base URL: {base_url}")
 client = LlamaStackClient(base_url=base_url)
-
-vector_db_id = "my-milvus-db"
+dbs = client.vector_dbs.list()
+identifier = dbs[0].identifier
+vector_db_id = identifier
 
 model_id = "llama-model"
 
