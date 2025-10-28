@@ -1,0 +1,136 @@
+# RHEL Image Mode base (bootc)
+FROM registry.redhat.io/rhel9/rhel-bootc:latest
+
+# ── Base OS and app dependencies
+# Note: You may need subscription/entitlements for registry.redhat.io access.
+RUN dnf -y update && \
+    dnf -y install \
+      # Python + build tools
+      python3 python3-pip python3-devel gcc \
+      # X11 + window manager + toolkit bits
+      xorg-x11-server-Xorg xorg-x11-xauth xorg-x11-xinit \
+      mesa-dri-drivers mesa-libgbm \
+      openbox \
+      # Fonts to avoid missing glyphs
+      google-noto-sans-fonts google-noto-serif-fonts \
+      # Firefox for kiosk
+      firefox \
+      # Convenience
+      shadow-utils \
+    && dnf clean all
+
+# ── App code
+# Copy your Streamlit app into /opt/app
+# If your repo layout differs, adjust these COPY lines.
+WORKDIR /opt/app
+COPY app.py /opt/app/
+COPY requirements.txt /opt/app/
+# If you have a package dir (e.g., src/ or app/), copy it too:
+# COPY app/ /opt/app/app/
+# COPY src/ /opt/app/src/
+
+# Install Python dependencies system-wide (or use a venv if preferred)
+RUN pip3 install --no-cache-dir -r /opt/app/requirements.txt
+
+# ── Create kiosk user (non-root) and home
+RUN useradd -m -d /home/kiosk -s /bin/bash kiosk && \
+    mkdir -p /home/kiosk && \
+    chown -R kiosk:kiosk /home/kiosk /opt/app
+
+# ── SELinux: permissive for first iteration (you can tighten later)
+# Persistently set permissive; runtime still enforces labeling.
+RUN sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config
+
+# ── Environment defaults
+ENV STREAMLIT_PORT=8501
+ENV STREAMLIT_ADDR=127.0.0.1
+ENV STREAMLIT_APP=/opt/app/app.py
+ENV KIOSK_URL=http://localhost:${STREAMLIT_PORT}
+
+# ── X11 session: start Openbox and Firefox in kiosk
+# .xinitrc controls what runs under startx
+RUN bash -lc 'cat > /home/kiosk/.xinitrc << "EOF"\n\
+#!/bin/bash\n\
+# Minimal Openbox session, then Firefox in kiosk to Streamlit\n\
+# Disable screensaver/power management (optional)\n\
+xset s off -dpms\n\
+# Start Openbox\n\
+openbox-session &\n\
+# Small delay to let WM come up\n\
+sleep 1\n\
+# Launch Firefox in kiosk pointing to local Streamlit\n\
+exec firefox --no-remote --kiosk "${KIOSK_URL}"\n\
+EOF\n' && \
+    chown kiosk:kiosk /home/kiosk/.xinitrc && \
+    chmod 0755 /home/kiosk/.xinitrc
+
+# ── systemd unit: Streamlit app
+RUN bash -lc 'cat > /etc/systemd/system/streamlit.service << "EOF"\n\
+[Unit]\n\
+Description=Streamlit application\n\
+After=network-online.target\n\
+Wants=network-online.target\n\
+\n\
+[Service]\n\
+Type=simple\n\
+User=kiosk\n\
+WorkingDirectory=/opt/app\n\
+Environment=PYTHONUNBUFFERED=1\n\
+Environment=STREAMLIT_PORT=${STREAMLIT_PORT}\n\
+Environment=STREAMLIT_ADDR=${STREAMLIT_ADDR}\n\
+ExecStart=/usr/bin/streamlit run ${STREAMLIT_APP} \\\n\
+  --server.port=${STREAMLIT_PORT} \\\n\
+  --server.address=${STREAMLIT_ADDR} \\\n\
+  --browser.serverAddress=localhost \\\n\
+  --browser.gatherUsageStats=false\n\
+Restart=on-failure\n\
+\n\
+[Install]\n\
+WantedBy=multi-user.target\n\
+EOF\n'
+
+# ── systemd unit: graphical X + Firefox kiosk
+# This starts an X server on VT1 and runs the kiosk user's .xinitrc
+RUN bash -lc 'cat > /etc/systemd/system/kiosk.service << "EOF"\n\
+[Unit]\n\
+Description=Graphical kiosk (X11 + Firefox)\n\
+After=streamlit.service\n\
+Requires=streamlit.service\n\
+\n\
+[Service]\n\
+Type=simple\n\
+User=kiosk\n\
+Environment=DISPLAY=:0\n\
+TTYPath=/dev/tty1\n\
+# Start Xorg on VT1 and run startx as kiosk user\n\
+ExecStart=/usr/bin/startx /home/kiosk/.xinitrc -- :0 vt1 -s 0 -nolisten tcp\n\
+Restart=on-failure\n\
+\n\
+[Install]\n\
+WantedBy=graphical.target\n\
+EOF\n'
+
+# ── Ensure we reach graphical.target and these services start on boot
+RUN ln -sf /usr/lib/systemd/system/graphical.target /etc/systemd/system/default.target && \
+    systemctl enable streamlit.service && \
+    systemctl enable kiosk.service
+
+# ── Optional: hide the boot console by clearing getty on tty1 (purely cosmetic)
+# You can keep getty if you want local shell access.
+# RUN systemctl mask getty@tty1.service
+
+# ── Security hardening placeholders (future iterations)
+# - Switch SELinux to enforcing, add policy modules for Xorg/Firefox/Streamlit (if needed)
+# - Lock down kiosk user shells, disable VT switching, etc.
+
+# ── Labels for provenance
+LABEL org.opencontainers.image.title="RHEL Image Mode Streamlit Firefox Kiosk" \
+      org.opencontainers.image.description="Immutable bootc image that autostarts a Streamlit app and displays it in Firefox kiosk mode." \
+      org.opencontainers.image.vendor="cmays20" \
+      org.opencontainers.image.version="0.1.0"
+
+# ── Expose (for clarity; local only)
+# Streamlit binds to 127.0.0.1; external access is not expected in kiosk.
+EXPOSE 8501
+
+# ── Final: bootc image will boot into systemd; no CMD needed.

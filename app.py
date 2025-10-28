@@ -5,7 +5,7 @@ from llama_stack_client import LlamaStackClient
 from llama_stack_client.lib.agents.agent import Agent
 
 # Initialize client
-base_url = os.getenv("LLAMA_STACK_URL", "http://lsd-llama-milvus-service.rag.svc.cluster.local:8321")
+base_url = os.getenv("LLAMA_STACK_URL", "http://lsd-llama-milvus-inline-service.rag.svc.cluster.local:8321")
 print(f"Using base URL: {base_url}")
 client = LlamaStackClient(base_url=base_url)
 dbs = client.vector_dbs.list()
