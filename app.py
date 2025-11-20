@@ -84,30 +84,36 @@ with st.sidebar:
         st.rerun()
 
 # Chat input
-user_input = st.chat_input("Ask me about TechNet Indo-Pacific 2025 sessions...")
+user_input = st.chat_input("Ask me about the conference...")
 if user_input:
     with st.spinner("Searching and generating response..."):
 
-        # Get conversational response from agent
+        # Get conversational response from agent (streaming enabled)
         response = st.session_state.agent.create_turn(
             messages=[{"role": "user", "content": user_input}],
             session_id=st.session_state.session_id,
             stream=True,
         )
 
-        # Collect the response
+        # Collect the streamed response
         full_response = ""
         for event in response:
-            if hasattr(event, 'event') and hasattr(event.event, 'payload'):
+            if hasattr(event, "event") and hasattr(event.event, "payload"):
                 payload = event.event.payload
 
-                # Extract completion message
-                if hasattr(payload, 'turn') and hasattr(payload.turn, 'output_message'):
-                    if hasattr(payload.turn.output_message, 'content'):
-                        full_response = payload.turn.output_message.content
-                # Also handle streaming chunks
-                elif hasattr(payload, 'delta') and hasattr(payload.delta, 'content'):
-                    full_response += payload.delta.content
+                # Handle streaming chunks (preferred path)
+                if hasattr(payload, "delta") and hasattr(payload.delta, "content"):
+                    chunk = payload.delta.content
+                    full_response += chunk
+                    # Optionally show live updates in the UI
+                    st.write(chunk)
+
+                # Handle final completed message (end of stream)
+                elif hasattr(payload, "turn") and hasattr(payload.turn, "output_message"):
+                    if hasattr(payload.turn.output_message, "content"):
+                        # Only append if not already captured by deltas
+                        if not full_response:
+                            full_response = payload.turn.output_message.content
 
         # Save to history
         st.session_state.history.append({
@@ -118,6 +124,5 @@ if user_input:
 # Display chat history
 for item in st.session_state.history:
     st.chat_message("user").write(item["query"])
-
     with st.chat_message("assistant"):
         st.write(item["response"])
