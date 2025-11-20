@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: chatbot
-        image: quay.io/cmays20/chatbot:v1
+        image: quay.io/cmays20/chatbot:v2
         ports:
         - containerPort: 8501
           name: http
