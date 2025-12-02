@@ -53,7 +53,7 @@ if "agent" not in st.session_state:
         st.session_state.agent = Agent(
             client,
             model=model_id,
-            instructions="""You are a helpful conference concierge assistant for TechNet Indo-Pacific 2025. 
+            instructions="""You are a helpful conference concierge assistant.
             When users ask about sessions, provide a friendly, conversational response (2-3 sentences).
             Summarize what you found and highlight the most relevant information.
             Keep it concise - detailed session information will be shown in a table.""",
